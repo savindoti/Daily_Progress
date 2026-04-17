@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 
 from .models import SupportTask
 from .serializers import StatusUpdateSerializer, SupportTaskSerializer
+from .location_service import get_locations, get_districts_for_province, get_municipalities_for_district
 
 
 def format_elapsed_seconds(total_seconds):
@@ -67,8 +68,8 @@ class SupportTaskStatusView(APIView):
         return Response(SupportTaskSerializer(support).data)
 
 
-class SupportTaskDetailView(generics.RetrieveUpdateAPIView):
-    """Retrieve or update a SupportTask instance."""
+class SupportTaskDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Retrieve, update, or delete a SupportTask instance."""
     serializer_class = SupportTaskSerializer
     queryset = SupportTask.objects.all()
 
@@ -89,7 +90,7 @@ class ExportSupportsView(APIView):
                 "Date",
                 "Province",
                 "District",
-                "Municipality",
+                "Municipal",
                 "Details",
                 "Organization Name",
                 "Contact Person",
@@ -127,3 +128,25 @@ class ExportSupportsView(APIView):
         )
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
+
+
+class LocationListView(APIView):
+    """Get all provinces, districts, and municipalities."""
+    def get(self, request):
+        return Response(get_locations())
+
+
+class DistrictListView(APIView):
+    """Get districts for a specific province."""
+    def get(self, request):
+        province = request.query_params.get("province", "")
+        districts = get_districts_for_province(province)
+        return Response({"districts": districts})
+
+
+class MunicipalityListView(APIView):
+    """Get municipalities for a specific district."""
+    def get(self, request):
+        district = request.query_params.get("district", "")
+        municipalities = get_municipalities_for_district(district)
+        return Response({"municipalities": municipalities})

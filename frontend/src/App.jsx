@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, useRef, useLayoutEffect } from "react";
-import { CalendarDays, FileSpreadsheet, LoaderCircle, PlusCircle, Edit3, Sun, Moon } from "lucide-react";
-import { API_BASE_URL, DEFAULT_FORM, STATUS_OPTIONS } from "./constants";
+import { useEffect, useMemo, useState } from "react";
+import { CalendarDays, FileSpreadsheet, LoaderCircle, PlusCircle, Edit3, Sun, Moon, Trash2 } from "lucide-react";
+import { API_BASE_URL, DEFAULT_FORM, STATUS_OPTIONS, loadLocationsData, LOCATIONS_DATA } from "./constants";
 import { downloadBlob, formatDuration, getStatusTone } from "./utils";
 
 function App() {
@@ -23,39 +23,17 @@ function App() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now());
-  const containerRef = useRef(null);
-  const contentRef = useRef(null);
-  const [contentScale, setContentScale] = useState(1);
+  const [locations, setLocations] = useState({ provinces: [], districts: {}, municipalities: {} });
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(intervalId);
   }, []);
 
-  useLayoutEffect(() => {
-    function measure() {
-      const container = containerRef.current;
-      const content = contentRef.current;
-      if (!container || !content) return setContentScale(1);
+  useEffect(() => {
+    void loadLocationsData().then(data => setLocations(data));
+  }, []);
 
-      const cw = container.clientWidth;
-      const ch = container.clientHeight;
-
-      // baseline design resolution
-      const baseW = 1920;
-      const baseH = 1080;
-
-      const scaleW = cw / baseW;
-      const scaleH = ch / baseH;
-      // allow scaling up or down to best fit the viewport
-      const scale = Math.min(scaleW, scaleH);
-      setContentScale(Number(scale.toFixed(4)));
-    }
-
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [supports, yesterdaySupports, summary, showForm]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("theme-dark", darkMode);
@@ -165,6 +143,24 @@ function App() {
     }
   }
 
+  async function deleteSupport(id) {
+    if (!window.confirm("Are you sure you want to delete this entry?")) return;
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/supports/${id}/`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to delete support.");
+      }
+
+      await loadDashboard();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
   async function exportReport() {
     setExporting(true);
     setError("");
@@ -200,11 +196,15 @@ function App() {
     return formatDuration(elapsedSeconds);
   };
 
+  const backlogSupports = useMemo(() => {
+    return yesterdaySupports.filter((s) => s.status === "ongoing" && s.date < selectedDate);
+  }, [yesterdaySupports, selectedDate]);
+
   return (
     <div className="page-shell">
-      <div className="page-card" ref={containerRef}>
-        <div className="card-inner" style={{ transform: `scale(${contentScale})` }}>
-          <div className="card-content" ref={contentRef}>
+      <div className="page-card">
+        <div className="card-inner">
+          <div className="card-content">
         <header className="top-bar">
           <div className="calendar-chip">
             <CalendarDays size={26} />
@@ -261,7 +261,7 @@ function App() {
                 <span className="col-details">Details</span>
                 <span className="col-province">Province</span>
                 <span className="col-district">District</span>
-                <span className="col-local">Local Level</span>
+                <span className="col-local">Municipal</span>
                 <span className="col-org">Organization</span>
                 <span className="col-status">Status</span>
                 <span className="col-timer">Timer</span>
@@ -297,6 +297,9 @@ function App() {
                         <button type="button" className="icon-btn" onClick={() => startEdit(support)} aria-label="Edit support">
                           <Edit3 size={16} />
                         </button>
+                        <button type="button" className="icon-btn icon-btn--delete" onClick={() => deleteSupport(support.id)} aria-label="Delete support">
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     </article>
                   ))
@@ -307,7 +310,7 @@ function App() {
             </div>
 
             <div className="action-row">
-              <button className="add-support-btn" type="button" onClick={() => setShowForm((current) => !current)}>
+              <button className="add-support-btn" type="button" onClick={() => {setShowForm(true); setEditingId(null); setFormData({...DEFAULT_FORM, date: selectedDate})}}>
                 <PlusCircle size={24} />
                 Add new support
               </button>
@@ -326,72 +329,97 @@ function App() {
             </div>
 
             {showForm ? (
-              <form className="support-form" onSubmit={handleSubmit}>
-                <h2>Add New Support</h2>
-                <div className="form-grid">
-                  <label>
-                    <span>Date</span>
-                    <input type="date" value={formData.date} onChange={(event) => setFormData((current) => ({ ...current, date: event.target.value }))} required />
-                  </label>
-                  <label>
-                    <span>Province</span>
-                    <input type="text" value={formData.province} onChange={(event) => setFormData((current) => ({ ...current, province: event.target.value }))} required />
-                  </label>
-                  <label>
-                    <span>District</span>
-                    <input type="text" value={formData.district} onChange={(event) => setFormData((current) => ({ ...current, district: event.target.value }))} required />
-                  </label>
-                  <label>
-                    <span>Municipality</span>
-                    <input type="text" value={formData.municipality} onChange={(event) => setFormData((current) => ({ ...current, municipality: event.target.value }))} required />
-                  </label>
-                  <label className="wide">
-                    <span>Details</span>
-                    <textarea rows="3" value={formData.details} onChange={(event) => setFormData((current) => ({ ...current, details: event.target.value }))} required />
-                  </label>
-                  <label>
-                    <span>Organization Name</span>
-                    <input type="text" value={formData.organization_name} onChange={(event) => setFormData((current) => ({ ...current, organization_name: event.target.value }))} required />
-                  </label>
-                  <label>
-                    <span>Contact Person</span>
-                    <input type="text" value={formData.contact_person} onChange={(event) => setFormData((current) => ({ ...current, contact_person: event.target.value }))} required />
-                  </label>
-                  <label>
-                    <span>Contact Number</span>
-                    <input type="text" value={formData.contact_number} onChange={(event) => setFormData((current) => ({ ...current, contact_number: event.target.value }))} required />
-                  </label>
-                  <label>
-                    <span>Status</span>
-                    <select value={formData.status} onChange={(event) => setFormData((current) => ({ ...current, status: event.target.value }))}>
-                      {STATUS_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+              <div className="modal-overlay" onClick={() => setShowForm(false)}>
+                <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+                  <form className="support-form" onSubmit={handleSubmit}>
+                    <h2>{editingId ? "Edit Support" : "Add New Support"}</h2>
+                    <div className="form-grid">
+                      <label>
+                        <span>Date</span>
+                        <input type="date" value={formData.date} onChange={(event) => setFormData((current) => ({ ...current, date: event.target.value }))} required />
+                      </label>
+                      <label>
+                        <span>Province</span>
+                        <select value={formData.province} onChange={(event) => {
+                          const province = event.target.value;
+                          setFormData((current) => ({ ...current, province, district: "", municipality: "" }));
+                        }} required>
+                          <option value="">Select Province</option>
+                          {locations.provinces.map((province) => (
+                            <option key={province} value={province}>{province}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>District</span>
+                        <select value={formData.district} onChange={(event) => {
+                          const district = event.target.value;
+                          setFormData((current) => ({ ...current, district, municipality: "" }));
+                        }} disabled={!formData.province} required>
+                          <option value="">Select District</option>
+                          {formData.province && locations.districts[formData.province]?.map((district) => (
+                            <option key={district} value={district}>{district}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Municipal</span>
+                        <select value={formData.municipality} onChange={(event) => setFormData((current) => ({ ...current, municipality: event.target.value }))} disabled={!formData.district} required>
+                          <option value="">Select Municipal</option>
+                          {formData.district && locations.municipalities[formData.district]?.map((municipality) => (
+                            <option key={municipality} value={municipality}>{municipality}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="wide">
+                        <span>Details</span>
+                        <textarea rows="3" value={formData.details} onChange={(event) => setFormData((current) => ({ ...current, details: event.target.value }))} required />
+                      </label>
+                      <label>
+                        <span>Organization Name</span>
+                        <input type="text" value={formData.organization_name} onChange={(event) => setFormData((current) => ({ ...current, organization_name: event.target.value }))} required />
+                      </label>
+                      <label>
+                        <span>Contact Person</span>
+                        <input type="text" value={formData.contact_person} onChange={(event) => setFormData((current) => ({ ...current, contact_person: event.target.value }))} required />
+                      </label>
+                      <label>
+                        <span>Contact Number</span>
+                        <input type="text" value={formData.contact_number} onChange={(event) => setFormData((current) => ({ ...current, contact_number: event.target.value }))} required />
+                      </label>
+                      <label>
+                        <span>Status</span>
+                        <select value={formData.status} onChange={(event) => setFormData((current) => ({ ...current, status: event.target.value }))}>
+                          {STATUS_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="form-actions">
+                      <button type="button" className="ghost-btn" onClick={() => {setShowForm(false); setEditingId(null); setFormData({...DEFAULT_FORM, date: selectedDate})}}>
+                        Cancel
+                      </button>
+                      <button type="submit" className="primary-btn" disabled={saving}>
+                        {saving ? "Saving..." : editingId ? "Update Support" : "Create Support"}
+                      </button>
+                    </div>
+                  </form>
                 </div>
-                <div className="form-actions">
-                  <button type="button" className="ghost-btn" onClick={() => setShowForm(false)}>
-                    Cancel
-                  </button>
-                  <button type="submit" className="primary-btn" disabled={saving}>
-                    {saving ? "Saving..." : "Create Support"}
-                  </button>
-                </div>
-              </form>
+              </div>
             ) : null}
           </section>
 
           <aside className="sidebar-panel">
             <div className="section-header section-header--side">
-              <h2>Yesterdays Task</h2>
+              <h2>Backlog</h2>
             </div>
 
             <div className="yesterday-list">
-                {yesterdaySupports.length ? (
-                  yesterdaySupports.map((support, index) => (
+                {backlogSupports.length ? (
+                  backlogSupports.map((support, index) => (
                     <article className={`task-row task-row--compact tone-${getStatusTone(support.status)}`} key={support.id}>
                       <span className="cell cell--sn">{index + 1}</span>
                       <div className="cell-stack">
@@ -401,7 +429,7 @@ function App() {
                     </article>
                   ))
                 ) : (
-                  <div className="empty-state empty-state--compact">No yesterday tasks.</div>
+                  <div className="empty-state empty-state--compact">No backlog tasks.</div>
                 )}
             </div>
 
